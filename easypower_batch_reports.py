@@ -39,20 +39,12 @@ from pywinauto.timings import Timings
 Timings.window_find_timeout = 20     # give the (slow) whole-window fallback room
 
 # --------------------------------------------------------------------------- CONFIG
-OUTPUT_DIR = Path(r"C:\studies\reports")     # where SC<n>_DET.htm / _SUM.htm / .pdf land
+OUTPUT_DIR = Path(r"C:\studies\reports")     # default; the startup prompt overrides it
 MAIN_WINDOW_CLASS = "EasyPowerClass"         # match on class, not title (the title
                                              # collides with Explorer/Chrome windows)
 SETTLE = 0.3          # pause after each UI action settles (tune down if stable)
-SOLVE_WAIT = 3.0      # >>> VERIFY: seconds to let a Solve finish (no API event exists)
-ONLY = None           # e.g. ["Scenario-1", "Scenario-2"] to limit the run; None = all
+SOLVE_WAIT = 3.0      # seconds to let a Solve finish (no API event exists)
 
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)   # before the log file opens
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-7s  %(message)s",
-    handlers=[logging.StreamHandler(),
-              logging.FileHandler(OUTPUT_DIR / "batch_run.log", encoding="utf-8")],
-)
 log = logging.getLogger("ezp")
 
 
@@ -316,9 +308,63 @@ def process_scenario(win, app, app32, name):
     database_edit(win)
 
 
+def banner():
+    """Print the styled title block."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")     # so the box + © render on Windows
+    except Exception:
+        pass
+    lines = [
+        "EasyPower Reporting Automation",
+        "Copyright © Power-Link Technologies 2026",
+        "",
+        "Reach out to cooper@powerlinktec.com",
+        "for troubleshooting and for reporting bugs",
+    ]
+    w = max(len(s) for s in lines) + 6
+    print("\n╔" + "═" * w + "╗")
+    for s in lines:
+        print("║" + s.center(w) + "║")
+    print("╚" + "═" * w + "╝\n")
+
+
+def _confirm(prompt):
+    """Block until the user types yes (anything else re-asks)."""
+    while input(prompt).strip().lower() not in ("y", "yes"):
+        print("   ...type 'yes' when ready.")
+
+
+def prompt_setup():
+    """Interactive startup: collect the output dir and scenario list, then gate the
+    run on the user confirming EasyPower is open and configured. Returns
+    (output_dir, only) where `only` is a list of scenario names or None for all."""
+    banner()
+    raw = input(f"Output directory [{OUTPUT_DIR}]: ").strip().strip('"')
+    output_dir = Path(raw) if raw else OUTPUT_DIR
+
+    raw = input("Scenarios to run (comma-separated names, or blank for ALL): ").strip()
+    only = [s.strip() for s in raw.split(",") if s.strip()] or None
+
+    print()
+    _confirm("Open EasyPower and load the Base Case .dez, then type yes: ")
+    _confirm("Set your printing settings, then type yes: ")
+    _confirm("Set your report settings, then type yes: ")
+    print("\nStarting run...\n")
+    return output_dir, only
+
+
 def main():
+    global OUTPUT_DIR
+    OUTPUT_DIR, only = prompt_setup()
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-7s  %(message)s",
+        handlers=[logging.StreamHandler(),
+                  logging.FileHandler(OUTPUT_DIR / "batch_run.log", encoding="utf-8")],
+    )
     app, win, app32 = attach()
-    scenarios = ONLY or list_scenarios(win, app32)
+    scenarios = only or list_scenarios(win, app32)
     log.info("Found %d scenarios.", len(scenarios))
     failures = []
     for i, name in enumerate(scenarios, 1):
