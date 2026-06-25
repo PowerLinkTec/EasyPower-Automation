@@ -26,6 +26,19 @@ def _key(p):
     return (int(m.group(1)) if m else 0, p.stem)
 
 
+def _flatten_columns(df):
+    """read_html turns multi-row table headers into MultiIndex columns, which
+    pandas can't write to Excel with index=False. Join each column's levels into
+    one name (dropping the empty/'Unnamed'/'nan' filler read_html inserts)."""
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [
+            " ".join(s for s in (str(x).strip() for x in col)
+                     if s and s.lower() != "nan" and not s.startswith("Unnamed")).strip()
+            for col in df.columns
+        ]
+    return df
+
+
 def htm_to_workbook(folder, out_xlsx):
     """Each SC*_*.htm report -> one sheet. All HTML tables in a report are stacked
     so nothing is dropped (relies on pandas' startrow-append, fine on modern pandas)."""
@@ -42,7 +55,7 @@ def htm_to_workbook(folder, out_xlsx):
                 continue
             sheet, row = f.stem[:31], 0
             for t in tables:
-                t.to_excel(xl, sheet_name=sheet, index=False, startrow=row)
+                _flatten_columns(t).to_excel(xl, sheet_name=sheet, index=False, startrow=row)
                 row += len(t) + 2
     print(f"Wrote {out_xlsx} ({len(htms)} reports).")
 
