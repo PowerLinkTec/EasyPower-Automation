@@ -5,8 +5,11 @@ deliverables:
     sheet (one report per sheet, in scenario order);
   - Combined_Reports.pdf  : every SC*.pdf one-line print merged into one PDF.
 
-Run standalone on a finished output folder:
-    python build_master.py <output_folder>
+Run standalone (interactive — asks where the reports are and where the combined
+files should go):
+    python build_master.py
+or quick, writing the combined files into the same folder:
+    python build_master.py <reports_folder>
 It also runs automatically at the end of easypower_batch_reports.py.
 
 Needs: pip install pandas openpyxl lxml pypdf
@@ -77,11 +80,46 @@ def merge_pdfs(folder, out_pdf):
     print(f"Wrote {out_pdf} ({len(pdfs)} PDFs).")
 
 
-def build(folder):
-    folder = Path(folder)
-    htm_to_workbook(folder, folder / "Combined_Reports.xlsx")
-    merge_pdfs(folder, folder / "Combined_Reports.pdf")
+def build(input_folder, output_folder=None):
+    """Convert + merge the reports in input_folder; write the two combined files
+    to output_folder (defaults to input_folder)."""
+    in_dir = Path(input_folder)
+    out_dir = Path(output_folder) if output_folder else in_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    htm_to_workbook(in_dir, out_dir / "Combined_Reports.xlsx")
+    merge_pdfs(in_dir, out_dir / "Combined_Reports.pdf")
+
+
+def banner():
+    """Styled title block (matches easypower_batch_reports.py). Duplicated here so
+    this script doesn't have to import the pywinauto-heavy main module."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    lines = [
+        "EasyPower Reporting Automation",
+        "Copyright © Power-Link Technologies 2026",
+        "",
+        "Reach out to cooper@powerlinktec.com",
+        "for troubleshooting and for reporting bugs",
+    ]
+    w = max(len(s) for s in lines) + 6
+    print("\n╔" + "═" * w + "╗")
+    for s in lines:
+        print("║" + s.center(w) + "║")
+    print("╚" + "═" * w + "╝\n")
 
 
 if __name__ == "__main__":
-    build(sys.argv[1] if len(sys.argv) > 1 else ".")
+    if len(sys.argv) > 1:                                # quick: folder on the command line
+        build(sys.argv[1])
+    else:
+        banner()
+        while True:
+            src = input("Folder containing the report files: ").strip().strip('"')
+            if Path(src).is_dir():
+                break
+            print("   That folder doesn't exist — try again.")
+        dst = input(f"Folder for the combined files [{src}]: ").strip().strip('"')
+        build(src, dst or src)
