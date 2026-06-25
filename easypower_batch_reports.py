@@ -1,58 +1,52 @@
 """
-EasyPower batch report extractor
-=================================
-Opens each EasyPower file in a folder, runs a set of analyses, and exports
-each report to disk. EasyPower has no scripting/COM API, so this drives the
-Windows UI via pywinauto (Windows UI Automation backend).
+EasyPower Power Flow batch report extractor
+===========================================
+EasyPower has no scripting API, so this drives the UI via pywinauto. For every
+scenario inside the .dez that is ALREADY OPEN in EasyPower, it repeats your
+manual workflow:
 
-Requirements
-------------
-- Windows, with EasyPower installed and a Bentley license seat available.
-- An interactive, logged-in desktop session (this cannot run truly headless).
-- pip install pywinauto
+    1. Scenario Mgr -> Open Scenario -> (store? Yes) -> select the scenario
+    2. Power Flow -> Solve
+    3. (make the Detail/Summary text-report windows exist)
+    4. Window -> Power Flow Detail Report  -> File>Save As -> SC<n>_DET.htm
+    5. close that report (Ctrl+F4)
+    6. Window -> Power Flow Summary Report -> File>Save As -> SC<n>_SUM.htm  (+close)
+    7. Print -> OK -> Save Print Output As -> SC<n>.pdf  (Microsoft Print to PDF)
+    8. Database Edit  (back to edit mode, ready for the next scenario)
 
-How to adapt (do this once)
----------------------------
-The pieces that depend on your EasyPower version are marked `# >>> ADAPT`.
-To discover the right menu/dialog identifiers, open EasyPower, then in a
-Python shell:
+TWO BACKENDS: EasyPower's ribbon/menus/backstage are modern (uia), but its
+classic dialogs (Open Scenario, Print One-line, the Yes/No message boxes) are
+Win32/MFC and INVISIBLE to uia. So we attach both: `win` (uia) for the ribbon,
+`app32` (win32) for those dialogs. Modern file pickers stay on uia.
 
-    from pywinauto import Application
-    app = Application(backend="uia").connect(title_re=".*EasyPower.*")
-    app.window(title_re=".*EasyPower.*").print_control_identifiers()
+Spots that still need a live check are marked `# >>> VERIFY`.
 
-or use Microsoft's "Accessibility Insights" / Inspect.exe to read control
-names. Paste those names into the helpers below.
+Requirements: Windows; EasyPower running with the target .dez open; a held
+Bentley license; `pip install pywinauto`. Run a COPY of the .dez if you don't
+want stored-scenario results written back to the original.
 """
 
+import re
 import sys
 import time
 import logging
 from pathlib import Path
 
 from pywinauto import Application
-from pywinauto.timings import wait_until, TimeoutError as PWTimeout
+from pywinauto.keyboard import send_keys
+from pywinauto.timings import Timings
 
-# ---------------------------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------------------------
-EASYPOWER_EXE = r"C:\Program Files\EasyPower\EasyPower.exe"   # >>> ADAPT path
-INPUT_DIR     = Path(r"C:\studies\scenarios")                # the 36 files live here
-OUTPUT_DIR    = Path(r"C:\studies\reports")
-FILE_GLOB     = "*.dez"                                       # >>> ADAPT extension if different
+Timings.window_find_timeout = 20     # give the (slow) whole-window fallback room
 
-MAIN_WINDOW_RE = ".*EasyPower.*"
-CALC_TIMEOUT   = 600        # seconds to allow one analysis to finish
-SETTLE         = 1.0        # small pause after UI actions
+# --------------------------------------------------------------------------- CONFIG
+OUTPUT_DIR = Path(r"C:\studies\reports")     # where SC<n>_DET.htm / _SUM.htm / .pdf land
+MAIN_WINDOW_CLASS = "EasyPowerClass"         # match on class, not title (the title
+                                             # collides with Explorer/Chrome windows)
+SETTLE = 0.3          # pause after each UI action settles (tune down if stable)
+SOLVE_WAIT = 3.0      # >>> VERIFY: seconds to let a Solve finish (no API event exists)
+ONLY = None           # e.g. ["Scenario-1", "Scenario-2"] to limit the run; None = all
 
-# Each report is a recipe the loop runs for every file. Add/remove freely.
-# `run` and `export` reference helper funcs you fill in below.
-REPORTS = [
-    {"name": "arcflash",     "focus": "Arc Flash"},        # >>> ADAPT focus/menu labels
-    {"name": "shortcircuit", "focus": "Short Circuit"},
-    {"name": "coordination", "focus": "Coordination"},
-]
-
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)   # before the log file opens
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-7s  %(message)s",
@@ -62,152 +56,282 @@ logging.basicConfig(
 log = logging.getLogger("ezp")
 
 
-# ---------------------------------------------------------------------------
-# Low-level UI helpers  (the version-specific surface area)
-# ---------------------------------------------------------------------------
-def launch():
-    """Start EasyPower (or attach if already running) and return the app/window."""
+# --------------------------------------------------------------------------- helpers
+def attach():
+    """Attach BOTH backends to the running EasyPower (with the .dez open)."""
     try:
-        app = Application(backend="uia").connect(title_re=MAIN_WINDOW_RE, timeout=5)
-        log.info("Attached to running EasyPower instance.")
+        app = Application(backend="uia").connect(class_name=MAIN_WINDOW_CLASS, timeout=10)
+        app32 = Application(backend="win32").connect(class_name=MAIN_WINDOW_CLASS, timeout=10)
     except Exception:
-        app = Application(backend="uia").start(EASYPOWER_EXE)
-        log.info("Launched EasyPower.")
-    win = app.window(title_re=MAIN_WINDOW_RE)
-    win.wait("visible ready", timeout=120)
-    return app, win
+        sys.exit("EasyPower not found. Start it and open the .dez first.")
+    win = app.window(class_name=MAIN_WINDOW_CLASS)
+    win.wait("visible", timeout=60)
+    return app, win, app32
 
 
-def open_file(app, win, path: Path):
-    """
-    Open a study file. Try the command-line/Recent route first; fall back to
-    File > Open. Many Windows apps accept a path argument, which is far less
-    brittle than clicking through the Open dialog.
-    """
-    # Preferred: relaunch-with-arg style is unreliable for an already-open app,
-    # so use the Open dialog. >>> ADAPT the menu path + dialog field names.
-    win.menu_select("File->Open")          # may be ribbon, not classic menu — adapt
+_RIBBON = None       # cached ribbon-container wrapper (stable; its children are
+                     # queried live each call, so no per-button staleness)
+
+
+def _ribbon(win):
+    """Cached ribbon container. Searching only its subtree avoids walking the
+    huge one-line canvas, which is what makes whole-window uia searches ~10s.
+    The ribbon is a direct child of the main window (depth=1 = fast to locate)."""
+    global _RIBBON
+    if _RIBBON is None:
+        _RIBBON = win.child_window(control_type="ToolBar", title="EasyPower",
+                                   depth=1).wrapper_object()
+    return _RIBBON
+
+
+def _norm(s):
+    return " ".join(s.split())   # collapse newlines/runs of spaces in button text
+
+
+def _keys_escape(s):
+    """Escape characters special to send_keys so a literal path/text is typed."""
+    s = s.replace("{", "{{}").replace("}", "{}}")
+    for ch in "+^%~()[]":
+        s = s.replace(ch, "{" + ch + "}")
+    return s
+
+
+def click(win, title, ctype=None):
+    """uia click by visible text. Fast path: scan only the ribbon subtree (skips
+    the slow one-line canvas). Fallback: whole-window search for controls outside
+    the ribbon (dropdown menu items, backstage). Resolved FRESH every call so the
+    element and its coordinates are always current -- caching button wrappers made
+    later scenarios click stale ribbon buttons (Power Flow / Solve were missed)."""
+    want, el = _norm(title), None
+    try:
+        for cand in _ribbon(win).descendants(control_type=ctype):
+            try:
+                if _norm(cand.window_text()) == want:
+                    el = cand
+                    break
+            except Exception:
+                continue
+    except Exception:
+        globals()["_RIBBON"] = None          # ribbon wrapper went stale; re-resolve
+    if el is None:                            # not in ribbon: dropdown / backstage
+        kw = {"title": title}
+        if ctype:
+            kw["control_type"] = ctype
+        el = win.child_window(**kw).wrapper_object()
+    el.click_input()
     time.sleep(SETTLE)
-    dlg = app.window(title_re="Open.*")
-    dlg.child_window(auto_id="1148", control_type="Edit").set_text(str(path))  # filename box
-    dlg.child_window(title="Open", control_type="Button").click()
-    win.wait("visible ready", timeout=120)
-    time.sleep(SETTLE)
-    log.info("Opened %s", path.name)
 
 
-def select_focus(win, focus_label: str):
-    """Switch EasyPower to the analysis 'focus' for this report. >>> ADAPT."""
-    win.menu_select(f"Home->{focus_label}")   # ribbon/menu label per report recipe
+def w32_button(dlg, text):
+    """win32: click a dialog button by text (BM_CLICK via .click() — coordinate-
+    free, so DPI scaling can't make it miss). Tolerates an & accelerator."""
+    dlg.child_window(title_re=f"^&?{re.escape(text)}$", class_name="Button").click()
     time.sleep(SETTLE)
 
 
-def run_analysis(win):
-    """Trigger the calculation and block until it completes. >>> ADAPT trigger."""
-    win.menu_select("Home->Run")              # or a toolbar button; adapt
-    wait_for_calc(win)
-
-
-def wait_for_calc(win):
-    """
-    No API => poll the UI until the calc is done. Adapt the predicate to
-    something reliable in your version, e.g. a progress dialog disappearing
-    or a results status control appearing.
-    """
-    def done():
-        # >>> ADAPT: return True when results are ready.
-        # Example: a progress window is gone, or a "Done"/status control exists.
+def click_menu_item(win, pattern):
+    """Click an item in the open ribbon dropdown. Confirmed via diag: the dropdown
+    is a 'Menu' element that is a DIRECT child of the main window. So find it with
+    win.children() (direct children only -- instant) and search just that tiny
+    subtree. This avoids win.descendants(MenuItem), which crawls the one-line
+    canvas and measured ~28s. Falls back to that slow search only if not found."""
+    rx = re.compile(pattern)
+    for _ in range(10):                                  # menu may take a beat to render
         try:
-            return not win.child_window(title_re="Calculating.*").exists()
+            menus = win.children(control_type="Menu")
         except Exception:
-            return True
-    try:
-        wait_until(CALC_TIMEOUT, 1.0, done, value=True)
-    except PWTimeout:
-        raise RuntimeError("Calculation did not finish within timeout.")
+            menus = []
+        for menu in menus:
+            try:
+                for mi in menu.descendants(control_type="MenuItem"):
+                    if rx.search(mi.window_text() or ""):
+                        mi.click_input()
+                        time.sleep(SETTLE)
+                        return
+            except Exception:
+                continue
+        time.sleep(0.2)
+    win.child_window(title_re=f".*{pattern}.*", control_type="MenuItem").click_input()
     time.sleep(SETTLE)
 
 
-def export_report(app, win, report_name: str, out_path: Path):
-    """
-    Open the report and export it. Arc Flash / Equipment Duty reports export to
-    Excel or CSV from the report's spreadsheet view; text reports export/print
-    to file. >>> ADAPT the open-report + export-button + save-dialog steps.
-    """
-    win.menu_select("Reports->Create Report")     # adapt to the report type
-    time.sleep(SETTLE)
-    rpt = app.window(title_re=".*Report.*")
-    rpt.child_window(title="Excel", control_type="Button").click()   # or CSV/PDF
-    time.sleep(SETTLE)
-    save = app.window(title_re="Save As.*")
-    save.child_window(auto_id="1001", control_type="Edit").set_text(str(out_path))
-    save.child_window(title="Save", control_type="Button").click()
-    # handle a possible "overwrite?" confirmation
+def dismiss_store_prompt(app32, store=True):
+    """Win32 message box: 'The scenario has changed. Do you want to store it?'
+    Yes stores it (your choice). Harmless if it never appears."""
     try:
-        app.window(title_re="Confirm.*").child_window(title="Yes").click()
+        dlg = app32.window(title="EasyPower", class_name="#32770")
+        dlg.wait("visible", timeout=2)
+        w32_button(dlg, "Yes" if store else "No")
     except Exception:
         pass
-    time.sleep(SETTLE)
-    log.info("Exported %s", out_path.name)
 
 
-def close_file(win):
-    """Close the current file without saving. >>> ADAPT."""
+def dismiss_pf_options(app32, wait=0):
+    """OK the 'Power Flow Options' dialog if it's open. It can pop up at more than
+    one point in the Power Flow -> report path (after Solve, or when a report is
+    generated), so this is called defensively around those steps. `wait` = seconds
+    to allow it to appear; 0 = instant check (cheap). Harmless if absent."""
     try:
-        win.menu_select("File->Close")
-        time.sleep(SETTLE)
-        # decline any save prompt
-        win.type_keys("{ENTER}")   # adapt: explicitly click "No"/"Don't Save"
-    except Exception as e:
-        log.warning("Close issue: %s", e)
+        dlg = app32.window(title="Power Flow Options")
+        if dlg.exists(timeout=wait):
+            w32_button(dlg, "OK")
+            return True
+    except Exception:
+        pass
+    return False
 
 
-# ---------------------------------------------------------------------------
-# Orchestration
-# ---------------------------------------------------------------------------
-def out_name(study: Path, report_name: str) -> Path:
-    return OUTPUT_DIR / f"{study.stem}__{report_name}.xlsx"
+def _confirm_overwrite(app32):
+    """Win32 'file exists, replace?' prompt -> Yes. No-op if absent."""
+    try:
+        dlg = app32.window(class_name="#32770")
+        dlg.wait("visible", timeout=2)
+        w32_button(dlg, "Yes")
+    except Exception:
+        pass
 
 
-def process_file(app, win, study: Path):
-    open_file(app, win, study)
-    for rpt in REPORTS:
-        target = out_name(study, rpt["name"])
-        if target.exists():                      # resume support: skip done work
-            log.info("Skip (exists): %s", target.name)
-            continue
-        select_focus(win, rpt["focus"])
-        run_analysis(win)
-        export_report(app, win, rpt["name"], target)
-    close_file(win)
+def scenario_num(name):
+    """'Scenario-10' -> '10'. Falls back to a filename-safe form of the name."""
+    m = re.search(r"(\d+)\s*$", name)
+    return m.group(1) if m else re.sub(r"[^A-Za-z0-9]+", "_", name)
+
+
+# --------------------------------------------------------------------------- steps
+def open_scenario_dialog(win, app32):
+    """uia: Scenario Mgr > Open Scenario ; returns the win32 Open Scenario dialog."""
+    click(win, "Scenario Mgr", "SplitButton")
+    click_menu_item(win, "Open Scenario")           # >>> VERIFY exact text
+    dlg = app32.window(title="Open Scenario")             # classic dialog -> win32
+    dlg.wait("visible", timeout=15)
+    return dlg
+
+
+def list_scenarios(win, app32):
+    """Open the dialog, read the scenario list (win32 ListBox), Cancel out."""
+    click(win, "Scenario Mgr", "SplitButton")
+    click_menu_item(win, "Open Scenario")
+    dismiss_store_prompt(app32, store=False)             # don't store just to peek
+    dlg = app32.window(title="Open Scenario")
+    dlg.wait("visible", timeout=15)
+    lb = dlg.child_window(class_name="ListBox")
+    names = lb.item_texts() if hasattr(lb, "item_texts") else lb.texts()[1:]
+    w32_button(dlg, "Cancel")
+    return [n for n in names if n]
+
+
+def open_scenario(win, app32, name):
+    """Step 1."""
+    click(win, "Scenario Mgr", "SplitButton")
+    click_menu_item(win, "Open Scenario")
+    dismiss_store_prompt(app32, store=True)              # store current, per your flow
+    dlg = app32.window(title="Open Scenario")
+    dlg.wait("visible", timeout=15)
+    dlg.child_window(class_name="ListBox").select(name)  # win32 select-by-text
+    w32_button(dlg, "Open")
+    try:                                                 # confirm it actually opened
+        dlg.wait_not("visible", timeout=6)
+    except Exception:
+        log.info("Open didn't take; retrying %s", name)
+        dlg.child_window(class_name="ListBox").select(name)
+        w32_button(dlg, "Open")
+    log.info("Opened %s", name)
+
+
+def solve_power_flow(win, app32):
+    """Step 2: Power Flow (switch focus) -> Solve. The 'Power Flow Options' dialog
+    pops up AFTER Solve, so wait for it and OK it before moving on."""
+    click(win, "Power Flow", "SplitButton")              # shows the POWER FLOW tab
+    dismiss_pf_options(app32)                            # instant check
+    click(win, "Solve", "Button")                        # Action group; not Solve Motor
+    dismiss_pf_options(app32, wait=6)                    # usually appears here -> OK it
+    time.sleep(SOLVE_WAIT)                               # let the solve finish
+
+
+def save_report(win, app, app32, report_name, out_path):
+    """Steps 4/6: Window > <report> -> click the report's Save button -> type
+    the full output path into the Save Report dialog -> Save -> close the report.
+    The full path in 'File name' makes Windows save to OUTPUT_DIR regardless of the
+    dialog's current folder. 'Save Report' is a standard file dialog (uia)."""
+    click(win, "Window", "SplitButton")
+    dismiss_pf_options(app32)                            # instant: in case it blocks
+    click_menu_item(win, re.escape(report_name))         # fast popup-scoped search
+    dismiss_pf_options(app32, wait=4)                    # generating the report may pop it
+    time.sleep(SETTLE)
+    try:                                                 # report toolbar Save button
+        click(win, "Save", "Button")                     # -> opens the Save Report dialog
+    except Exception:
+        win.type_keys("^s")                              # fallback: Save shortcut
+    dlg = app32.window(title="Save Report")              # this dialog is win32, not uia
+    dlg.wait("visible", timeout=15)
+    dlg.set_focus()
+    time.sleep(SETTLE)
+    # Standard Windows save dialog: the File name field has focus on open. Select
+    # all, type the full path, Enter = Save (the dump shows the default button is
+    # '&Save'). Avoids the unlabeled Edit-inside-ComboBox that selectors can't hit.
+    send_keys("^a" + _keys_escape(str(out_path)) + "{ENTER}", with_spaces=True, pause=0.02)
+    _confirm_overwrite(app32)                            # 'replace existing?' -> Yes
+    time.sleep(SETTLE)
+    win.type_keys("^{F4}")                                # close the report window
+    time.sleep(SETTLE)
+    log.info("Saved %s", out_path.name)
+
+
+def print_to_pdf(win, app, app32, out_pdf):
+    """Step 7: Print -> OK (Microsoft Print to PDF) -> Save Print Output As.
+    'Print One-line' is a classic dialog (win32); the PDF picker is modern (uia)."""
+    click(win, "Print", "SplitButton")                   # QAT print, top-left
+    dlg = app32.window(title="Print One-line")           # classic dialog -> win32
+    dlg.wait("visible", timeout=15)
+    w32_button(dlg, "OK")
+    save = app32.window(title="Save Print Output As")    # standard Windows dialog (win32)
+    save.wait("visible", timeout=30)
+    save.set_focus()
+    time.sleep(SETTLE)
+    send_keys("^a" + _keys_escape(str(out_pdf)) + "{ENTER}", with_spaces=True, pause=0.02)
+    _confirm_overwrite(app32)
+    time.sleep(SETTLE)
+    log.info("Printed %s", out_pdf.name)
+
+
+def database_edit(win):
+    """Step 8: back to edit mode, ready for the next scenario."""
+    click(win, "Database Edit", "Button")
+
+
+# --------------------------------------------------------------------------- run
+def process_scenario(win, app, app32, name):
+    n = scenario_num(name)
+    outs = [OUTPUT_DIR / f"SC{n}_DET.htm",
+            OUTPUT_DIR / f"SC{n}_SUM.htm",
+            OUTPUT_DIR / f"SC{n}.pdf"]
+    if all(o.exists() for o in outs):                    # resume support
+        log.info("Skip %s (all outputs exist)", name)
+        return
+    open_scenario(win, app32, name)
+    solve_power_flow(win, app32)
+    save_report(win, app, app32, "Power Flow Detail Report",  outs[0])
+    save_report(win, app, app32, "Power Flow Summary Report", outs[1])
+    print_to_pdf(win, app, app32, outs[2])
+    database_edit(win)
 
 
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    files = sorted(INPUT_DIR.glob(FILE_GLOB))
-    if not files:
-        log.error("No files matching %s in %s", FILE_GLOB, INPUT_DIR)
-        sys.exit(1)
-    log.info("Found %d files; %d reports each.", len(files), len(REPORTS))
-
-    app, win = launch()
+    app, win, app32 = attach()
+    scenarios = ONLY or list_scenarios(win, app32)
+    log.info("Found %d scenarios.", len(scenarios))
     failures = []
-    for i, study in enumerate(files, 1):
-        log.info("[%d/%d] %s", i, len(files), study.name)
+    for i, name in enumerate(scenarios, 1):
+        log.info("[%d/%d] %s", i, len(scenarios), name)
         try:
-            process_file(app, win, study)
+            process_scenario(win, app, app32, name)
         except Exception as e:
-            log.exception("FAILED on %s: %s", study.name, e)
-            failures.append(study.name)
-            # try to get back to a clean state for the next file
-            try:
-                close_file(win)
-            except Exception:
-                pass
-
-    log.info("Done. %d ok, %d failed.", len(files) - len(failures), len(failures))
+            log.exception("FAILED on %s: %s", name, e)
+            failures.append(name)
+            database_edit(win)                           # try to get back to a clean state
+    log.info("Done. %d ok, %d failed.", len(scenarios) - len(failures), len(failures))
     if failures:
-        log.warning("Failed files: %s", ", ".join(failures))
+        log.warning("Failed: %s", ", ".join(failures))
 
 
 if __name__ == "__main__":
