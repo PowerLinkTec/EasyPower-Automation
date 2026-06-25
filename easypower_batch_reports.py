@@ -349,7 +349,10 @@ def prompt_setup():
     _confirm("Open EasyPower and load the Base Case .dez, then type yes: ")
     _confirm("Set your printing settings, then type yes: ")
     _confirm("Set your report settings, then type yes: ")
-    print("\nStarting run...\n")
+    print("\n" + "!" * 64)
+    print("  STARTING RUN — do NOT touch the mouse or keyboard until it")
+    print("  finishes. The script is controlling the screen for you.")
+    print("!" * 64 + "\n")
     return output_dir, only
 
 
@@ -378,6 +381,13 @@ def main():
     log.info("Done. %d ok, %d failed.", len(scenarios) - len(failures), len(failures))
     if failures:
         log.warning("Failed: %s", ", ".join(failures))
+
+    log.info("Combining reports into one workbook + one PDF...")
+    try:
+        from build_master import build
+        build(OUTPUT_DIR)
+    except Exception as e:
+        log.warning("Combine step failed (%s). Raw files are still in %s.", e, OUTPUT_DIR)
 
 
 if __name__ == "__main__":
