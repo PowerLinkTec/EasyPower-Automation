@@ -19,6 +19,7 @@ If --title finds nothing, it prints every open window so you can see the real
 title to match. ponytail: thin dumper, no logic to test — connect and print.
 """
 
+import re
 import sys
 import argparse
 from pywinauto import Desktop
@@ -58,7 +59,9 @@ def main():
         return
 
     try:
-        win = Desktop(backend=args.backend).window(title_re=f".*{args.title}.*")
+        # re.escape so titles with [ ] ( ) & etc. match literally, not as regex.
+        win = Desktop(backend=args.backend).window(
+            title_re=".*" + re.escape(args.title) + ".*")
         win.wait("exists", timeout=10)
     except Exception:
         print(f"No window matching '{args.title}' (backend={args.backend}).\n"
