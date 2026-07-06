@@ -1,13 +1,16 @@
 """
-build_master.py — convert each EasyPower HTM report to an individual Excel file
-and merge all PDFs into one.
+build_master.py — convert each EasyPower HTM report to an individual Excel file,
+merge one-line diagram PDFs, and produce a combined PDF printout of all tables.
 
-Excel:
-  Every SC*_DET.htm / SC*_SUM.htm report becomes its own .xlsx file
-  (e.g. SC1_DET.htm -> SC1_DET.xlsx) in the output folder.
+HTM reports:
+  Every SC*_DET.htm / SC*_SUM.htm and LF_*_DET.htm / LF_*_SUM.htm report becomes
+  its own .xlsx file (e.g. SC1_DET.htm -> SC1_DET.xlsx) in the output folder.
 
 PDF:
-  Every SC*.pdf is concatenated into Combined_Reports.pdf.
+  One-line diagrams (SLDs): Every SC*.pdf / LF_*.pdf is concatenated into
+  combined_sld.pdf (scenario order, LF after SC).
+  Data tables: Every SC*_*.xlsx / LF_*_*.xlsx is rendered into combined_report.pdf
+  via reportlab (SC first, then LF by percentage).
 
 Run standalone (interactive — asks where the reports are):
     python build_master.py
@@ -15,7 +18,7 @@ or quick:
     python build_master.py <reports_folder>
 It also runs automatically at the end of easypower_batch_reports.py.
 
-Needs: pip install pandas openpyxl lxml pypdf
+Needs: pip install pandas openpyxl lxml pypdf reportlab
 """
 
 import re
@@ -27,9 +30,15 @@ from pypdf import PdfWriter
 
 
 def _key(p):
-    """Sort by scenario number then name: SC1_DET, SC1_SUM, SC2_DET, ... SC10..."""
-    m = re.match(r"SC(\d+)", p.stem)
-    return (int(m.group(1)) if m else 0, p.stem)
+    """Sort: SC files first by number, then LF files by percentage.  Files that
+    match neither pattern sort at the end."""
+    m_sc = re.match(r"SC(\d+)", p.stem)
+    m_lf = re.match(r"LF_(\d+)", p.stem)
+    if m_sc:
+        return (0, int(m_sc.group(1)), p.stem)
+    if m_lf:
+        return (1, int(m_lf.group(1)), p.stem)
+    return (2, 0, p.stem)
 
 
 def _flatten_columns(df):
@@ -79,16 +88,17 @@ def _explode_multiline_rows(df):
 
 
 def htm_to_excels(folder, out_dir=None):
-    """Convert each SC*_*.htm report into a separate .xlsx file.  Multiple
-    <table> elements inside one HTM are stacked vertically on a single sheet."""
+    """Convert each SC*_*.htm / LF_*_*.htm report into a separate .xlsx file.
+    Multiple <table> elements inside one HTM are stacked vertically on a single
+    sheet."""
     if out_dir is None:
         out_dir = folder
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    htms = sorted(folder.glob("SC*_*.htm"), key=_key)
+    htms = sorted(folder.glob("SC*_*.htm") + folder.glob("LF_*_*.htm"), key=_key)
     if not htms:
-        print("No SC*_*.htm reports found.")
+        print("No HTM reports found.")
         return
 
     converted = 0
@@ -113,10 +123,10 @@ def htm_to_excels(folder, out_dir=None):
 
 
 def merge_pdfs(folder, out_pdf):
-    """Every SC*.pdf -> one combined PDF, in scenario order."""
-    pdfs = sorted(folder.glob("SC*.pdf"), key=_key)
+    """Merge one-line diagrams (SLDs): every SC*.pdf / LF_*.pdf -> one combined PDF."""
+    pdfs = sorted(folder.glob("SC*.pdf") + folder.glob("LF_*.pdf"), key=_key)
     if not pdfs:
-        print("No SC*.pdf files found.")
+        print("No PDF files found for merging.")
         return
     writer = PdfWriter()
     for f in pdfs:
@@ -129,13 +139,88 @@ def merge_pdfs(folder, out_pdf):
     print(f"Wrote {out_pdf} ({len(pdfs)} PDFs).")
 
 
+def xlsx_to_combined_pdf(folder, out_pdf):
+    """Convert every SC*_*.xlsx / LF_*_*.xlsx into one combined PDF via reportlab.
+
+    Each sheet from each workbook becomes a section in the PDF with a bold
+    heading and a table rendered in 7pt Helvetica with grid lines, light-grey
+    header background, and automatic page splitting.  SC files appear first,
+    then LF files in percentage order."""
+    xlsx_files = sorted(folder.glob("SC*_*.xlsx") + folder.glob("LF_*_*.xlsx"), key=_key)
+    if not xlsx_files:
+        print("No Excel files found for PDF printout.")
+        return
+
+    from openpyxl import load_workbook
+    from reportlab.lib.pagesizes import landscape, A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, PageBreak, Paragraph,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    doc = SimpleDocTemplate(
+        str(out_pdf), pagesize=landscape(A4),
+        leftMargin=10*mm, rightMargin=10*mm,
+        topMargin=10*mm, bottomMargin=10*mm,
+    )
+
+    styles = getSampleStyleSheet()
+    heading_style = styles["Heading2"]
+    elements = []
+
+    for f in xlsx_files:
+        wb = load_workbook(f, read_only=True, data_only=True)
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            elements.append(
+                Paragraph(f"<b>{f.stem}</b> &mdash; {sheet_name}", heading_style)
+            )
+
+            data = []
+            for row in ws.iter_rows(values_only=True):
+                data.append([str(v) if v is not None else "" for v in row])
+
+            if data:
+                t = Table(data, repeatRows=1, hAlign="LEFT")
+                t.setStyle(
+                    TableStyle([
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 7),
+                        ("GRID", (0, 0), (-1, -1), 0.25, colors.Color(0.6, 0.6, 0.6)),
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.9, 0.9, 0.9)),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 1),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                    ])
+                )
+                elements.append(t)
+            elements.append(PageBreak())
+        wb.close()
+
+    # Drop trailing blank page
+    if elements and isinstance(elements[-1], PageBreak):
+        elements.pop()
+
+    if elements:
+        doc.build(elements)
+        print(f"Wrote {out_pdf} ({len(xlsx_files)} Excel files).")
+    else:
+        print("No data to write to PDF.")
+
+
 def build(input_folder, output_folder=None):
-    """Convert HTM reports to individual Excel files + merge PDFs."""
+    """Convert HTM reports to individual Excel files + merge PDFs + combined report."""
     in_dir = Path(input_folder)
     out_dir = Path(output_folder) if output_folder else in_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     htm_to_excels(in_dir, out_dir)
-    merge_pdfs(in_dir, out_dir / "Combined_Reports.pdf")
+    merge_pdfs(in_dir, out_dir / "combined_sld.pdf")
+    xlsx_to_combined_pdf(out_dir, out_dir / "combined_report.pdf")
 
 
 def banner():

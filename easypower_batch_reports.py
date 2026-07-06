@@ -294,9 +294,13 @@ def database_edit(win):
 # --------------------------------------------------------------------------- run
 def process_scenario(win, app, app32, name):
     n = scenario_num(name)
-    outs = [OUTPUT_DIR / f"SC{n}_DET.htm",
-            OUTPUT_DIR / f"SC{n}_SUM.htm",
-            OUTPUT_DIR / f"SC{n}.pdf"]
+    if "LF" in name:
+        prefix = f"LF_{n}"
+    else:
+        prefix = f"SC{n}"
+    outs = [OUTPUT_DIR / f"{prefix}_DET.htm",
+            OUTPUT_DIR / f"{prefix}_SUM.htm",
+            OUTPUT_DIR / f"{prefix}.pdf"]
     if all(o.exists() for o in outs):                    # resume support
         log.info("Skip %s (all outputs exist)", name)
         return
