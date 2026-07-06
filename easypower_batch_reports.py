@@ -382,7 +382,7 @@ def main():
     if failures:
         log.warning("Failed: %s", ", ".join(failures))
 
-    log.info("Combining reports into one workbook + one PDF...")
+    log.info("Converting reports to individual Excel files + one PDF...")
     try:
         from build_master import build
         build(OUTPUT_DIR)

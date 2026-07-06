@@ -1,14 +1,17 @@
 """
-build_master.py — combine the EasyPower batch outputs in a folder into two
-deliverables:
-  - Combined_Reports.xlsx : every SC*_DET.htm / SC*_SUM.htm report converted to a
-    sheet (one report per sheet, in scenario order);
-  - Combined_Reports.pdf  : every SC*.pdf one-line print merged into one PDF.
+build_master.py — convert each EasyPower HTM report to an individual Excel file
+and merge all PDFs into one.
 
-Run standalone (interactive — asks where the reports are and where the combined
-files should go):
+Excel:
+  Every SC*_DET.htm / SC*_SUM.htm report becomes its own .xlsx file
+  (e.g. SC1_DET.htm -> SC1_DET.xlsx) in the output folder.
+
+PDF:
+  Every SC*.pdf is concatenated into Combined_Reports.pdf.
+
+Run standalone (interactive — asks where the reports are):
     python build_master.py
-or quick, writing the combined files into the same folder:
+or quick:
     python build_master.py <reports_folder>
 It also runs automatically at the end of easypower_batch_reports.py.
 
@@ -42,25 +45,71 @@ def _flatten_columns(df):
     return df
 
 
-def htm_to_workbook(folder, out_xlsx):
-    """Each SC*_*.htm report -> one sheet. All HTML tables in a report are stacked
-    so nothing is dropped (relies on pandas' startrow-append, fine on modern pandas)."""
+def _explode_multiline_rows(df):
+    """Expand rows where cells contain \\n (from <br> in the HTM) into separate
+    rows.  EasyPower sometimes puts multiple branch entries under one bus into a
+    single HTML table row separated by <br> tags.  read_html reads those as a
+    single cell with newlines; we split them so each entry gets its own Excel row,
+    leaving columns that didn't have breaks blank on subsequent rows."""
+    br_cols = [col for col in df.columns
+               if df[col].astype(str).str.contains("\n", na=False).any()]
+    if not br_cols:
+        return df
+
+    new_rows = []
+    for _, row in df.iterrows():
+        parts = {}
+        n = 1
+        for col in br_cols:
+            val = str(row[col]) if pd.notna(row[col]) else ""
+            lines = val.split("\n")
+            parts[col] = lines
+            n = max(n, len(lines))
+        for i in range(n):
+            nr = {}
+            for col in df.columns:
+                if col in br_cols:
+                    lines = parts[col]
+                    nr[col] = lines[i].strip() if i < len(lines) else ""
+                else:
+                    val = str(row[col]) if pd.notna(row[col]) else ""
+                    nr[col] = val.strip() if i == 0 else ""
+            new_rows.append(nr)
+    return pd.DataFrame(new_rows)
+
+
+def htm_to_excels(folder, out_dir=None):
+    """Convert each SC*_*.htm report into a separate .xlsx file.  Multiple
+    <table> elements inside one HTM are stacked vertically on a single sheet."""
+    if out_dir is None:
+        out_dir = folder
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     htms = sorted(folder.glob("SC*_*.htm"), key=_key)
     if not htms:
         print("No SC*_*.htm reports found.")
         return
-    with pd.ExcelWriter(out_xlsx, engine="openpyxl") as xl:
-        for f in htms:
-            try:
-                tables = pd.read_html(f)
-            except Exception as e:                       # no tables / no parser
-                print(f"skip {f.name}: {e}")
-                continue
+
+    converted = 0
+    for f in htms:
+        try:
+            tables = pd.read_html(f)
+        except Exception as e:
+            print(f"skip {f.name}: {e}")
+            continue
+
+        out_path = out_dir / f"{f.stem}.xlsx"
+        with pd.ExcelWriter(out_path, engine="openpyxl") as xl:
             sheet, row = f.stem[:31], 0
             for t in tables:
-                _flatten_columns(t).to_excel(xl, sheet_name=sheet, index=False, startrow=row)
+                t = _flatten_columns(t)
+                t = _explode_multiline_rows(t)
+                t.to_excel(xl, sheet_name=sheet, index=False, startrow=row)
                 row += len(t) + 2
-    print(f"Wrote {out_xlsx} ({len(htms)} reports).")
+        converted += 1
+        print(f"  {f.name} -> {out_path.name}")
+    print(f"Converted {converted} report(s) to individual Excel files.")
 
 
 def merge_pdfs(folder, out_pdf):
@@ -81,12 +130,11 @@ def merge_pdfs(folder, out_pdf):
 
 
 def build(input_folder, output_folder=None):
-    """Convert + merge the reports in input_folder; write the two combined files
-    to output_folder (defaults to input_folder)."""
+    """Convert HTM reports to individual Excel files + merge PDFs."""
     in_dir = Path(input_folder)
     out_dir = Path(output_folder) if output_folder else in_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    htm_to_workbook(in_dir, out_dir / "Combined_Reports.xlsx")
+    htm_to_excels(in_dir, out_dir)
     merge_pdfs(in_dir, out_dir / "Combined_Reports.pdf")
 
 
@@ -121,5 +169,5 @@ if __name__ == "__main__":
             if Path(src).is_dir():
                 break
             print("   That folder doesn't exist — try again.")
-        dst = input(f"Folder for the combined files [{src}]: ").strip().strip('"')
+        dst = input(f"Output folder (for the .xlsx + .pdf files) [{src}]: ").strip().strip('"')
         build(src, dst or src)
