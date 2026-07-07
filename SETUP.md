@@ -24,6 +24,7 @@ Wait a minute or two for it to finish.
 
 ## 5. Open EasyPower
 - Launch EasyPower and open your study's **Base Case** `.dez` file.
+- Make sure each scenario name ends with a **number** — the script extracts it for the output filenames. For example: `Scenario-1`, `Scenario-10`, or `LF-2`. Scenarios without a trailing number will use a sanitised version of the full name instead.
 - Set your **print settings** and **report settings** the way you want them — the program will pause and ask you to confirm these.
 - *Tip:* work on a **copy** of your study file if you don't want scenario results saved back into the original.
 
@@ -35,7 +36,9 @@ python easypower_batch_reports.py
 Then follow the on-screen prompts:
 - **Output directory** — where to save the reports (or press Enter for the default).
 - **Scenarios** — press Enter to run all of them, or type specific names separated by commas (e.g. `Scenario-1, Scenario-5`).
-- It asks you to confirm EasyPower is open and your settings are set — type **yes** to each.
+- **Scenario naming** — confirm your scenarios end with a number (e.g. `Scenario-1`), then type **yes**.
+- **EasyPower** — confirm it's open with the Base Case loaded, then type **yes**.
+- **Settings** — confirm your print and report settings are set, then type **yes** to each.
 
 It then runs on its own. **Don't touch the mouse or keyboard while it runs** — it's driving the screen for you. When it finishes, your output folder will hold the individual reports plus **Combined_Reports.xlsx** and **Combined_Reports.pdf**.
 

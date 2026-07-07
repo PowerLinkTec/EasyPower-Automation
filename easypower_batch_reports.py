@@ -337,8 +337,9 @@ def _confirm(prompt):
 
 def prompt_setup():
     """Interactive startup: collect the output dir and scenario list, then gate the
-    run on the user confirming EasyPower is open and configured. Returns
-    (output_dir, only) where `only` is a list of scenario names or None for all."""
+    run on the user confirming scenario naming, EasyPower is open, and settings
+    are configured.  Returns (output_dir, only) where `only` is a list of
+    scenario names or None for all."""
     banner()
     raw = input(f"Output directory [{OUTPUT_DIR}]: ").strip().strip('"')
     output_dir = Path(raw) if raw else OUTPUT_DIR
@@ -347,6 +348,7 @@ def prompt_setup():
     only = [s.strip() for s in raw.split(",") if s.strip()] or None
 
     print()
+    _confirm("Ensure each scenario name ends with a number (e.g. Scenario-1), then type yes: ")
     _confirm("Open EasyPower and load the Base Case .dez, then type yes: ")
     _confirm("Set your printing settings, then type yes: ")
     _confirm("Set your report settings, then type yes: ")
