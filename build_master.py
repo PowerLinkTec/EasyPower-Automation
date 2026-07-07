@@ -248,19 +248,42 @@ def _calc_pdf_col_widths(data, avail_pt):
     return [w * avail_pt / total for w in raw]
 
 
+def _word_wrap_cells(data, col_widths, font_size=8):
+    """Insert ``\\n`` into cells whose text exceeds the column width.
+
+    reportlab's Table draws cells with ``canvas.drawString`` which only
+    respects explicit newlines.  This pre-processing step prevents long
+    unbroken strings (e.g. branch-equipment names) from overflowing into
+    adjacent cells.
+    """
+    char_width = font_size * 0.55
+    for ri, row in enumerate(data):
+        for ci, val in enumerate(row):
+            text = str(val)
+            if not text or ci >= len(col_widths):
+                continue
+            max_chars = int(col_widths[ci] / char_width) - 1
+            if max_chars < 1 or len(text) <= max_chars:
+                continue
+            lines = []
+            for i in range(0, len(text), max_chars):
+                lines.append(text[i:i + max_chars])
+            data[ri][ci] = "\n".join(lines)
+
+
 def xlsx_to_combined_pdf(folder, out_pdf):
     """Convert every sc_*_*.xlsx into one combined PDF via reportlab.
 
     Each sheet from each workbook becomes a section in the PDF with a bold
-    heading and a table rendered in 7pt Helvetica with grid lines, light-grey
-    header background, and automatic page splitting."""
+    heading and a table rendered in 8pt Helvetica with grid lines,
+    blue-grey header, per-bus-group alternating rows."""
     xlsx_files = sorted(list(folder.glob("sc_*_*.xlsx")), key=_key)
     if not xlsx_files:
         print("No Excel files found for PDF printout.")
         return
 
     from openpyxl import load_workbook
-    from reportlab.lib.pagesizes import landscape, A4
+    from reportlab.lib.pagesizes import landscape, legal
     from reportlab.lib import colors
     from reportlab.lib.units import mm
     from reportlab.platypus import (
@@ -269,7 +292,7 @@ def xlsx_to_combined_pdf(folder, out_pdf):
     from reportlab.lib.styles import getSampleStyleSheet
 
     doc = SimpleDocTemplate(
-        str(out_pdf), pagesize=landscape(A4),
+        str(out_pdf), pagesize=landscape(legal),
         leftMargin=10*mm, rightMargin=10*mm,
         topMargin=10*mm, bottomMargin=10*mm,
     )
@@ -293,6 +316,7 @@ def xlsx_to_combined_pdf(folder, out_pdf):
 
             if data:
                 col_widths = _calc_pdf_col_widths(data, doc.width)
+                _word_wrap_cells(data, col_widths)
 
                 # Build per-row BACKGROUND commands — colour changes on bus name
                 bg_cmds = []
@@ -318,7 +342,6 @@ def xlsx_to_combined_pdf(folder, out_pdf):
                         ("GRID", (0, 0), (-1, -1), 0.5, colors.Color(0.6, 0.6, 0.6)),
                         ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.70, 0.79, 0.89)),
                         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                        ("WORDWRAP", (0, 0), (-1, -1), True),
                         ("VALIGN", (0, 0), (-1, -1), "TOP"),
                         ("TOPPADDING", (0, 0), (-1, -1), 2),
                         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
