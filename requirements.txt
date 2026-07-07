@@ -1,6 +1,7 @@
 pywinauto
+numpy
 pandas<3.0
-openpyxl
+openpyxl>=3.0.7
 lxml
 pypdf
 reportlab
