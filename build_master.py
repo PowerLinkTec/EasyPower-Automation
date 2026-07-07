@@ -144,7 +144,7 @@ def htm_to_excels(folder, out_dir=None):
             sheet, row = f.stem[:31], 0
             for t in tables:
                 t = _flatten_columns(t)
-                t = t.map(lambda v: v.replace("|||", "\n") if isinstance(v, str) else v)
+                t = t.applymap(lambda v: v.replace("|||", "\n") if isinstance(v, str) else v)
                 t = _explode_multiline_rows(t)
                 t.to_excel(xl, sheet_name=sheet, index=False, startrow=row)
                 row += len(t) + 2
