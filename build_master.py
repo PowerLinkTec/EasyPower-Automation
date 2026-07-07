@@ -96,7 +96,7 @@ def htm_to_excels(folder, out_dir=None):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    htms = sorted(folder.glob("SC*_*.htm") + folder.glob("LF_*_*.htm"), key=_key)
+    htms = sorted(list(folder.glob("SC*_*.htm")) + list(folder.glob("LF_*_*.htm")), key=_key)
     if not htms:
         print("No HTM reports found.")
         return
@@ -124,7 +124,7 @@ def htm_to_excels(folder, out_dir=None):
 
 def merge_pdfs(folder, out_pdf):
     """Merge one-line diagrams (SLDs): every SC*.pdf / LF_*.pdf -> one combined PDF."""
-    pdfs = sorted(folder.glob("SC*.pdf") + folder.glob("LF_*.pdf"), key=_key)
+    pdfs = sorted(list(folder.glob("SC*.pdf")) + list(folder.glob("LF_*.pdf")), key=_key)
     if not pdfs:
         print("No PDF files found for merging.")
         return
@@ -146,7 +146,7 @@ def xlsx_to_combined_pdf(folder, out_pdf):
     heading and a table rendered in 7pt Helvetica with grid lines, light-grey
     header background, and automatic page splitting.  SC files appear first,
     then LF files in percentage order."""
-    xlsx_files = sorted(folder.glob("SC*_*.xlsx") + folder.glob("LF_*_*.xlsx"), key=_key)
+    xlsx_files = sorted(list(folder.glob("SC*_*.xlsx")) + list(folder.glob("LF_*_*.xlsx")), key=_key)
     if not xlsx_files:
         print("No Excel files found for PDF printout.")
         return
