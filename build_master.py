@@ -39,15 +39,15 @@ import pandas as pd
 
 from pypdf import PdfWriter
 
-# Patch pypdf's md5 call – some OpenSSL builds reject 'usedforsecurity'.
-import pypdf._writer, hashlib
-_orig = pypdf._writer._rolling_checksum
-def _safe_rolling_checksum(stream, blocksize=65536):
-    h = hashlib.md5()
-    for block in iter(lambda: stream.read(blocksize), b""):
-        h.update(block)
-    return h.hexdigest()
-pypdf._writer._rolling_checksum = _safe_rolling_checksum
+# Some OpenSSL builds reject the 'usedforsecurity' keyword argument that
+# pypdf and reportlab pass to md5().  Patch hashlib.md5 so it strips the
+# keyword, allowing the call to fall through to the underlying C function.
+import hashlib
+_orig_md5 = hashlib.md5
+def _md5_no_usedforsecurity(data=b"", **kwargs):
+    kwargs.pop("usedforsecurity", None)
+    return _orig_md5(data, **kwargs) if kwargs else _orig_md5(data)
+hashlib.md5 = _md5_no_usedforsecurity
 
 
 def _key(p):
