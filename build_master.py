@@ -161,9 +161,14 @@ def _style_xlsx_sheet(ws):
         cell.border = THIN_BORDER
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # Style data rows with alternating colours (HTM: white / #d9e4f0)
+    # Style data rows — colour changes only when bus name (col A) changes
+    bus_idx = -1
     for data_row in range(2, max_row + 1):
-        fill = ALT_FILL if data_row % 2 == 1 else None
+        a = ws.cell(row=data_row, column=1).value
+        if a and str(a).strip():
+            bus_idx += 1
+
+        fill = ALT_FILL if bus_idx % 2 == 1 else None
         for col in range(1, max_col + 1):
             cell = ws.cell(row=data_row, column=col)
             cell.font = DATA_FONT
@@ -228,6 +233,21 @@ def merge_pdfs(folder, out_pdf):
     print(f"Wrote {out_pdf} ({len(pdfs)} PDFs).")
 
 
+def _calc_pdf_col_widths(data, avail_pt):
+    """Distribute available page width proportionally across columns.
+
+    Each column's share is based on its header text length (capped at 18 chars
+    to prevent overly wide columns), scaled to exactly fill *avail_pt*.
+    """
+    if not data:
+        return None
+    header = data[0]
+    char_width = 5.5
+    raw = [max(30, min(110, len(str(h)) * char_width)) for h in header]
+    total = sum(raw)
+    return [w * avail_pt / total for w in raw]
+
+
 def xlsx_to_combined_pdf(folder, out_pdf):
     """Convert every sc_*_*.xlsx into one combined PDF via reportlab.
 
@@ -272,7 +292,24 @@ def xlsx_to_combined_pdf(folder, out_pdf):
                 data.append([str(v) if v is not None else "" for v in row])
 
             if data:
-                t = Table(data, repeatRows=1, hAlign="LEFT")
+                col_widths = _calc_pdf_col_widths(data, doc.width)
+
+                # Build per-row BACKGROUND commands — colour changes on bus name
+                bg_cmds = []
+                bus_idx = -1
+                last_bus = None
+                for ri, row in enumerate(data[1:], start=1):
+                    name = str(row[0]).strip() if row[0] else ""
+                    if name and name != last_bus:
+                        bus_idx += 1
+                        last_bus = name
+                    if bus_idx % 2 == 1:
+                        bg_cmds.append(
+                            ("BACKGROUND", (0, ri), (-1, ri),
+                             colors.Color(0.85, 0.89, 0.94))
+                        )
+
+                t = Table(data, repeatRows=1, hAlign="LEFT", colWidths=col_widths)
                 t.setStyle(
                     TableStyle([
                         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -281,14 +318,13 @@ def xlsx_to_combined_pdf(folder, out_pdf):
                         ("GRID", (0, 0), (-1, -1), 0.5, colors.Color(0.6, 0.6, 0.6)),
                         ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.70, 0.79, 0.89)),
                         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-                         [colors.white, colors.Color(0.85, 0.89, 0.94)]),
+                        ("WORDWRAP", (0, 0), (-1, -1), True),
                         ("VALIGN", (0, 0), (-1, -1), "TOP"),
                         ("TOPPADDING", (0, 0), (-1, -1), 2),
                         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
                         ("LEFTPADDING", (0, 0), (-1, -1), 3),
                         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-                    ])
+                    ] + bg_cmds)
                 )
                 elements.append(t)
             elements.append(PageBreak())
