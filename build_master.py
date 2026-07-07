@@ -248,27 +248,34 @@ def _calc_pdf_col_widths(data, avail_pt):
     return [w * avail_pt / total for w in raw]
 
 
-def _word_wrap_cells(data, col_widths, font_size=8):
+def _word_wrap_cells(data, col_widths, font_name="Helvetica", font_size=8):
     """Insert ``\\n`` into cells whose text exceeds the column width.
 
-    reportlab's Table draws cells with ``canvas.drawString`` which only
-    respects explicit newlines.  This pre-processing step prevents long
-    unbroken strings (e.g. branch-equipment names) from overflowing into
-    adjacent cells.
+    Uses reportlab's own ``stringWidth`` so it matches pixel-for-pixel what
+    ``drawString`` renders — no magic constants needed.
     """
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
     pad = 6
-    char_width = font_size * 0.65
     for ri, row in enumerate(data):
         for ci, val in enumerate(row):
             text = str(val)
             if not text or ci >= len(col_widths):
                 continue
-            max_chars = max(1, int((col_widths[ci] - pad) / char_width))
-            if len(text) <= max_chars:
+            avail = col_widths[ci] - pad
+            if avail <= 0 or stringWidth(text, font_name, font_size) <= avail:
                 continue
             lines = []
-            for i in range(0, len(text), max_chars):
-                lines.append(text[i:i + max_chars])
+            while text:
+                lo, hi = 1, len(text)
+                while lo < hi:
+                    mid = (lo + hi + 1) // 2
+                    if stringWidth(text[:mid], font_name, font_size) <= avail:
+                        lo = mid
+                    else:
+                        hi = mid - 1
+                lines.append(text[:lo])
+                text = text[lo:]
             data[ri][ci] = "\n".join(lines)
 
 
