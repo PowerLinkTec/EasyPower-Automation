@@ -338,14 +338,17 @@ def _confirm(prompt):
 def prompt_setup():
     """Interactive startup: collect the output dir and scenario list, then gate the
     run on the user confirming scenario naming, EasyPower is open, and settings
-    are configured.  Returns (output_dir, only) where `only` is a list of
-    scenario names or None for all."""
+    are configured.  Returns (output_dir, only, excludes) where `only` is a list
+    of scenario names or None for all, and `excludes` are names to filter out."""
     banner()
     raw = input(f"Output directory [{OUTPUT_DIR}]: ").strip().strip('"')
     output_dir = Path(raw) if raw else OUTPUT_DIR
 
-    raw = input("Scenarios to run (comma-separated names, or blank for ALL): ").strip()
-    only = [s.strip() for s in raw.split(",") if s.strip()] or None
+    raw = input("Scenarios to run (comma-separated names, or blank for ALL; '-' prefix to exclude): ").strip()
+    parts = [s.strip() for s in raw.split(",") if s.strip()]
+    includes = [p for p in parts if not p.startswith("-")]
+    excludes = [p[1:] for p in parts if p.startswith("-")]
+    only = includes or None
 
     print()
     _confirm("Ensure each scenario name ends with a number (e.g. Scenario-1), then type yes: ")
@@ -356,12 +359,12 @@ def prompt_setup():
     print("  STARTING RUN — do NOT touch the mouse or keyboard until it")
     print("  finishes. The script is controlling the screen for you.")
     print("!" * 64 + "\n")
-    return output_dir, only
+    return output_dir, only, excludes
 
 
 def main():
     global OUTPUT_DIR
-    OUTPUT_DIR, only = prompt_setup()
+    OUTPUT_DIR, only, excludes = prompt_setup()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -371,6 +374,8 @@ def main():
     )
     app, win, app32 = attach()
     scenarios = only or list_scenarios(win, app32)
+    if excludes:
+        scenarios = [s for s in scenarios if s not in excludes]
     log.info("Found %d scenarios.", len(scenarios))
     failures = []
     for i, name in enumerate(scenarios, 1):
