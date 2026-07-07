@@ -1,5 +1,5 @@
 pywinauto
-pandas
+pandas<3.0
 openpyxl
 lxml
 pypdf

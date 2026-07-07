@@ -120,6 +120,59 @@ def _preprocess_html(content):
     return content.replace("</div><div", "</div>|||<div")
 
 
+def _style_xlsx_sheet(ws):
+    """Apply HTM-like styling to a worksheet after data has been written.
+
+    Uses the same colour palette as the EasyPower-generated HTM reports:
+    - Header row: #b3cae2 (blue-grey), bold, 10pt
+    - Data rows: alternating #ffffff / #d9e4f0, 10pt
+    - Thin borders, sensible column widths.
+    """
+    from openpyxl.styles import (
+        Font, PatternFill, Alignment, Border, Side,
+    )
+    from openpyxl.utils import get_column_letter
+
+    HEADER_FILL = PatternFill(start_color="B3CAE2", end_color="B3CAE2", fill_type="solid")
+    ALT_FILL = PatternFill(start_color="D9E4F0", end_color="D9E4F0", fill_type="solid")
+
+    HEADER_FONT = Font(bold=True, size=10)
+    DATA_FONT = Font(size=10)
+
+    THIN_BORDER = Border(
+        left=Side(style="thin", color="999999"),
+        right=Side(style="thin", color="999999"),
+        top=Side(style="thin", color="999999"),
+        bottom=Side(style="thin", color="999999"),
+    )
+
+    max_col = ws.max_column
+    max_row = ws.max_row
+
+    # Column widths: generous for text columns, tighter for numeric
+    for col_idx in range(1, max_col + 1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 22
+
+    # Style header row (row 1) — matches HTM group/column header colour
+    for col in range(1, max_col + 1):
+        cell = ws.cell(row=1, column=col)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.border = THIN_BORDER
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    # Style data rows with alternating colours (HTM: white / #d9e4f0)
+    for data_row in range(2, max_row + 1):
+        fill = ALT_FILL if data_row % 2 == 1 else None
+        for col in range(1, max_col + 1):
+            cell = ws.cell(row=data_row, column=col)
+            cell.font = DATA_FONT
+            cell.border = THIN_BORDER
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if fill:
+                cell.fill = fill
+
+
 def htm_to_excels(folder, out_dir=None):
     """Convert each sc_*_*.htm report into a separate .xlsx file.  Multiple
     <table> elements inside one HTM are stacked vertically on a single sheet."""
@@ -152,6 +205,7 @@ def htm_to_excels(folder, out_dir=None):
                 t = _explode_multiline_rows(t)
                 t.to_excel(xl, sheet_name=sheet, index=False, startrow=row)
                 row += len(t) + 2
+            _style_xlsx_sheet(xl.sheets[sheet])
         converted += 1
         print(f"  {f.name} -> {out_path.name}")
     print(f"Converted {converted} report(s) to individual Excel files.")
@@ -202,6 +256,7 @@ def xlsx_to_combined_pdf(folder, out_pdf):
 
     styles = getSampleStyleSheet()
     heading_style = styles["Heading2"]
+    heading_style.textColor = colors.Color(0, 0, 0.6)
     elements = []
 
     for f in xlsx_files:
@@ -222,14 +277,17 @@ def xlsx_to_combined_pdf(folder, out_pdf):
                     TableStyle([
                         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                         ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-                        ("FONTSIZE", (0, 0), (-1, -1), 7),
-                        ("GRID", (0, 0), (-1, -1), 0.25, colors.Color(0.6, 0.6, 0.6)),
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.9, 0.9, 0.9)),
+                        ("FONTSIZE", (0, 0), (-1, -1), 8),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.Color(0.6, 0.6, 0.6)),
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.70, 0.79, 0.89)),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                         [colors.white, colors.Color(0.85, 0.89, 0.94)]),
                         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("TOPPADDING", (0, 0), (-1, -1), 1),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                        ("TOPPADDING", (0, 0), (-1, -1), 2),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
                     ])
                 )
                 elements.append(t)
