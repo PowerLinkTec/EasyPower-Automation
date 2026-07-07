@@ -397,6 +397,20 @@ def main():
     except Exception as e:
         log.warning("Combine step failed (%s). Raw files are still in %s.", e, OUTPUT_DIR)
 
+    log.info("Populating PF Master.xlsx with power-flow results...")
+    try:
+        import importlib.util
+        _script_dir = Path(__file__).parent
+        spec = importlib.util.spec_from_file_location(
+            "powerflow_report", _script_dir / "powerflow-report.py"
+        )
+        pfr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pfr)
+        det_dir = OUTPUT_DIR / "ez_automation_output"
+        pfr.build(det_dir, det_dir)
+    except Exception as e:
+        log.warning("PowerFlow report step failed (%s).", e)
+
 
 if __name__ == "__main__":
     main()
