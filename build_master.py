@@ -23,6 +23,7 @@ Needs: pip install pandas openpyxl lxml pypdf reportlab
 
 import re
 import sys
+from io import StringIO
 from pathlib import Path
 
 import numpy as np
@@ -107,6 +108,13 @@ def _explode_multiline_rows(df):
     return pd.DataFrame(new_rows)
 
 
+def _preprocess_html(content):
+    """EasyPower puts multiple entries in a single table row as separate
+    <div> elements inside one <td>.  lxml's text_content() concatenates them
+    without a separator, so we insert a unique delimiter before parsing."""
+    return content.replace("</div><div", "</div>|||<div")
+
+
 def htm_to_excels(folder, out_dir=None):
     """Convert each SC*_*.htm / LF_*_*.htm report into a separate .xlsx file.
     Multiple <table> elements inside one HTM are stacked vertically on a single
@@ -124,7 +132,9 @@ def htm_to_excels(folder, out_dir=None):
     converted = 0
     for f in htms:
         try:
-            tables = pd.read_html(f)
+            raw = f.read_text("utf-8")
+            raw = _preprocess_html(raw)
+            tables = pd.read_html(StringIO(raw))
         except Exception as e:
             print(f"skip {f.name}: {e}")
             continue
@@ -134,6 +144,7 @@ def htm_to_excels(folder, out_dir=None):
             sheet, row = f.stem[:31], 0
             for t in tables:
                 t = _flatten_columns(t)
+                t = t.map(lambda v: v.replace("|||", "\n") if isinstance(v, str) else v)
                 t = _explode_multiline_rows(t)
                 t.to_excel(xl, sheet_name=sheet, index=False, startrow=row)
                 row += len(t) + 2
