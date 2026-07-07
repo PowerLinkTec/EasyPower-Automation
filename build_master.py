@@ -247,7 +247,7 @@ def xlsx_to_combined_pdf(folder, out_pdf):
 def build(input_folder, output_folder=None):
     """Convert HTM reports to individual Excel files + merge PDFs + combined report."""
     in_dir = Path(input_folder)
-    out_dir = Path(output_folder) if output_folder else in_dir
+    out_dir = Path(output_folder) if output_folder else in_dir / "ez_automation_output"
     out_dir.mkdir(parents=True, exist_ok=True)
     htm_to_excels(in_dir, out_dir)
     merge_pdfs(in_dir, out_dir / "combined_sld.pdf")
@@ -286,4 +286,4 @@ if __name__ == "__main__":
                 break
             print("   That folder doesn't exist — try again.")
         dst = input(f"Output folder (for the .xlsx + .pdf files) [{src}]: ").strip().strip('"')
-        build(src, dst or src)
+        build(src, dst or None)
