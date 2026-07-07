@@ -3,14 +3,14 @@ build_master.py — convert each EasyPower HTM report to an individual Excel fil
 merge one-line diagram PDFs, and produce a combined PDF printout of all tables.
 
 HTM reports:
-  Every sc_*_det.htm / sc_*_sum.htm and lf_*_det.htm / lf_*_sum.htm report becomes
-  its own .xlsx file (e.g. sc_01_det.htm -> sc_01_det.xlsx) in the output folder.
+  Every sc_*_det.htm / sc_*_sum.htm report becomes its own .xlsx file (e.g.
+  sc_01_det.htm -> sc_01_det.xlsx) in the output folder.
 
 PDF:
-  One-line diagrams (SLDs): Every sc_*.pdf / lf_*.pdf is concatenated into
-  combined_sld.pdf (scenario order, LF after SC).
-  Data tables: Every sc_*_*.xlsx / lf_*_*.xlsx is rendered into combined_report.pdf
-  via reportlab (SC first, then LF by percentage).
+  One-line diagrams (SLDs): Every sc_*.pdf is concatenated into combined_sld.pdf
+  (scenario order).
+  Data tables: Every sc_*_*.xlsx is rendered into combined_report.pdf via
+  reportlab.
 
 Run standalone (interactive — asks where the reports are):
     python build_master.py
@@ -51,27 +51,20 @@ hashlib.md5 = _md5_no_usedforsecurity
 
 
 def _key(p):
-    """Sort: SC files first by number, then LF files by percentage.  Files that
-    match neither pattern sort at the end."""
-    m_sc = re.match(r"sc_(\d+)", p.stem)
-    m_lf = re.match(r"lf_(\d+)", p.stem)
-    if m_sc:
-        return (0, int(m_sc.group(1)), p.stem)
-    if m_lf:
-        return (1, int(m_lf.group(1)), p.stem)
-    return (2, 0, p.stem)
+    """Sort by scenario number.  Files that don't match sort at the end."""
+    m = re.match(r"sc_(\d+)", p.stem)
+    if m:
+        return (int(m.group(1)), p.stem)
+    return (float("inf"), p.stem)
 
 
 def _report_title(stem):
-    """sc_01_det -> 'Scenario 01 - Detailed', lf_01_sum -> 'LF 01 - Summary', etc."""
-    m = re.match(r"(sc|lf)_(\d+)_(det|sum)", stem)
+    """sc_01_det -> 'Scenario 01 - Detailed', sc_01_sum -> 'Scenario 01 - Summary'."""
+    m = re.match(r"sc_(\d+)_(det|sum)", stem)
     if not m:
         return stem
-    prefix, num, rtype = m.group(1), m.group(2), m.group(3)
-    type_label = "Detailed" if rtype == "det" else "Summary"
-    if prefix == "lf":
-        return f"LF {num} - {type_label}"
-    return f"Scenario {num} - {type_label}"
+    num, rtype = m.group(1), m.group(2)
+    return f"Scenario {num} - {'Detailed' if rtype == 'det' else 'Summary'}"
 
 
 def _flatten_columns(df):
@@ -128,15 +121,14 @@ def _preprocess_html(content):
 
 
 def htm_to_excels(folder, out_dir=None):
-    """Convert each sc_*_*.htm / lf_*_*.htm report into a separate .xlsx file.
-    Multiple <table> elements inside one HTM are stacked vertically on a single
-    sheet."""
+    """Convert each sc_*_*.htm report into a separate .xlsx file.  Multiple
+    <table> elements inside one HTM are stacked vertically on a single sheet."""
     if out_dir is None:
         out_dir = folder
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    htms = sorted(list(folder.glob("sc_*_*.htm")) + list(folder.glob("lf_*_*.htm")), key=_key)
+    htms = sorted(list(folder.glob("sc_*_*.htm")), key=_key)
     if not htms:
         print("No HTM reports found.")
         return
@@ -166,8 +158,8 @@ def htm_to_excels(folder, out_dir=None):
 
 
 def merge_pdfs(folder, out_pdf):
-    """Merge one-line diagrams (SLDs): every sc_*.pdf / lf_*.pdf -> one combined PDF."""
-    pdfs = sorted(list(folder.glob("sc_*.pdf")) + list(folder.glob("lf_*.pdf")), key=_key)
+    """Merge one-line diagrams (SLDs): every sc_*.pdf -> one combined PDF."""
+    pdfs = sorted(list(folder.glob("sc_*.pdf")), key=_key)
     if not pdfs:
         print("No PDF files found for merging.")
         return
@@ -183,13 +175,12 @@ def merge_pdfs(folder, out_pdf):
 
 
 def xlsx_to_combined_pdf(folder, out_pdf):
-    """Convert every sc_*_*.xlsx / lf_*_*.xlsx into one combined PDF via reportlab.
+    """Convert every sc_*_*.xlsx into one combined PDF via reportlab.
 
     Each sheet from each workbook becomes a section in the PDF with a bold
     heading and a table rendered in 7pt Helvetica with grid lines, light-grey
-    header background, and automatic page splitting.  SC files appear first,
-    then LF files in percentage order."""
-    xlsx_files = sorted(list(folder.glob("sc_*_*.xlsx")) + list(folder.glob("lf_*_*.xlsx")), key=_key)
+    header background, and automatic page splitting."""
+    xlsx_files = sorted(list(folder.glob("sc_*_*.xlsx")), key=_key)
     if not xlsx_files:
         print("No Excel files found for PDF printout.")
         return

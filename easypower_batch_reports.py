@@ -294,10 +294,7 @@ def database_edit(win):
 # --------------------------------------------------------------------------- run
 def process_scenario(win, app, app32, name):
     n = scenario_num(name)
-    if "LF" in name:
-        prefix = f"lf_{n}"
-    else:
-        prefix = f"sc_{n}"
+    prefix = f"sc_{n}"
     outs = [OUTPUT_DIR / f"{prefix}_det.htm",
             OUTPUT_DIR / f"{prefix}_sum.htm",
             OUTPUT_DIR / f"{prefix}.pdf"]
