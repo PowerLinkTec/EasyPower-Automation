@@ -285,5 +285,6 @@ if __name__ == "__main__":
             if Path(src).is_dir():
                 break
             print("   That folder doesn't exist — try again.")
-        dst = input(f"Output folder (for the .xlsx + .pdf files) [{src}]: ").strip().strip('"')
+        default_out = str(Path(src) / "ez_automation_output")
+        dst = input(f"Output folder (for the .xlsx + .pdf files) [{default_out}]: ").strip().strip('"')
         build(src, dst or None)
