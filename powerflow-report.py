@@ -21,6 +21,15 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
+
+# NumPy 2.x removed deprecated aliases like np.float, np.int, np.bool.
+# Some libraries (e.g. openpyxl with older pandas) still reference them.
+for _name, _val in (("float", float), ("int", int), ("bool", bool),
+                     ("complex", complex)):
+    if not hasattr(np, _name):
+        setattr(np, _name, _val)
+
 import pandas as pd
 
 # --------------------------------------------------------------------------- CONFIG
@@ -278,10 +287,9 @@ if __name__ == "__main__":
     else:
         banner()
         while True:
-            src = input("Folder containing the report files: ").strip().strip('"')
+            src = input("Folder containing the sc_XX_det.xlsx files (ez_automation_output folder): ").strip().strip('"')
             if Path(src).is_dir():
                 break
             print("   That folder doesn't exist — try again.")
-        default_out = str(Path(src) / "ez_automation_output")
-        dst = input(f"Output folder (for PF_Master_IFC.xlsx) [{default_out}]: ").strip().strip('"')
-        build(src, dst or None)
+        dst = input(f"Output folder (for PF_Master_IFC.xlsx) [{src}]: ").strip().strip('"')
+        build(src, dst or src)
