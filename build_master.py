@@ -256,14 +256,15 @@ def _word_wrap_cells(data, col_widths, font_size=8):
     unbroken strings (e.g. branch-equipment names) from overflowing into
     adjacent cells.
     """
-    char_width = font_size * 0.55
+    pad = 6
+    char_width = font_size * 0.65
     for ri, row in enumerate(data):
         for ci, val in enumerate(row):
             text = str(val)
             if not text or ci >= len(col_widths):
                 continue
-            max_chars = int(col_widths[ci] / char_width) - 1
-            if max_chars < 1 or len(text) <= max_chars:
+            max_chars = max(1, int((col_widths[ci] - pad) / char_width))
+            if len(text) <= max_chars:
                 continue
             lines = []
             for i in range(0, len(text), max_chars):
