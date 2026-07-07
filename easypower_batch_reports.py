@@ -8,10 +8,10 @@ manual workflow:
     1. Scenario Mgr -> Open Scenario -> (store? Yes) -> select the scenario
     2. Power Flow -> Solve
     3. (make the Detail/Summary text-report windows exist)
-    4. Window -> Power Flow Detail Report  -> File>Save As -> SC<n>_DET.htm
-    5. close that report (Ctrl+F4)
-    6. Window -> Power Flow Summary Report -> File>Save As -> SC<n>_SUM.htm  (+close)
-    7. Print -> OK -> Save Print Output As -> SC<n>.pdf  (Microsoft Print to PDF)
+     4. Window -> Power Flow Detail Report  -> File>Save As -> sc_<n>_det.htm
+     5. close that report (Ctrl+F4)
+     6. Window -> Power Flow Summary Report -> File>Save As -> sc_<n>_sum.htm  (+close)
+     7. Print -> OK -> Save Print Output As -> sc_<n>.pdf  (Microsoft Print to PDF)
     8. Database Edit  (back to edit mode, ready for the next scenario)
 
 TWO BACKENDS: EasyPower's ribbon/menus/backstage are modern (uia), but its
@@ -186,7 +186,7 @@ def _confirm_overwrite(app32):
 def scenario_num(name):
     """'Scenario-10' -> '10'. Falls back to a filename-safe form of the name."""
     m = re.search(r"(\d+)\s*$", name)
-    return m.group(1) if m else re.sub(r"[^A-Za-z0-9]+", "_", name)
+    return m.group(1).zfill(2) if m else re.sub(r"[^A-Za-z0-9]+", "_", name)
 
 
 # --------------------------------------------------------------------------- steps
@@ -295,11 +295,11 @@ def database_edit(win):
 def process_scenario(win, app, app32, name):
     n = scenario_num(name)
     if "LF" in name:
-        prefix = f"LF_{n}"
+        prefix = f"lf_{n}"
     else:
-        prefix = f"SC{n}"
-    outs = [OUTPUT_DIR / f"{prefix}_DET.htm",
-            OUTPUT_DIR / f"{prefix}_SUM.htm",
+        prefix = f"sc_{n}"
+    outs = [OUTPUT_DIR / f"{prefix}_det.htm",
+            OUTPUT_DIR / f"{prefix}_sum.htm",
             OUTPUT_DIR / f"{prefix}.pdf"]
     if all(o.exists() for o in outs):                    # resume support
         log.info("Skip %s (all outputs exist)", name)
