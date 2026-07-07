@@ -25,6 +25,15 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
+
+# NumPy 2.x removed deprecated aliases like np.float, np.int, np.bool.
+# Some libraries (e.g. openpyxl with older pandas) still reference them.
+for _name, _val in (("float", float), ("int", int), ("bool", bool),
+                     ("complex", complex)):
+    if not hasattr(np, _name):
+        setattr(np, _name, _val)
+
 import pandas as pd
 from pypdf import PdfWriter
 
