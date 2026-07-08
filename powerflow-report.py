@@ -284,8 +284,9 @@ def _populate_power(df_p, sc, poi_flow_kw, poi_flow_kvar, pv_row, bess_row):
     df_p.loc[mask, "Gross Reactive Power Supplied Per PV Skid (kVAR)"] = pv_kvar
 
     # BESS skid — negate reactive power to match report sign convention
-    bess_kw = _safe_val(bess_row, "Generation kW", DECIMALS_POWER)
-    bess_kvar = -_safe_val(bess_row, "Generation kVAR", DECIMALS_POWER)
+    # INV_MB6 is one half of the BESS plant; multiply by 2 for total skid power
+    bess_kw = _safe_val(bess_row, "Generation kW", DECIMALS_POWER) * 2
+    bess_kvar = -_safe_val(bess_row, "Generation kVAR", DECIMALS_POWER) * 2
     df_p.loc[mask, "Gross Active Power Supplied Per BESS Skid (kW)"] = bess_kw
     df_p.loc[mask, "Gross Reactive Power Supplied Per BESS Skid (kVAR)"] = bess_kvar
 
