@@ -355,7 +355,7 @@ def build(input_folder, output_folder=None):
     is written to *output_folder* (defaults to ``input_folder/ez_automation_output``).
     """
     in_dir = Path(input_folder)
-    out_dir = Path(output_folder) if output_folder else in_dir / "ez_automation_output"
+    out_dir = Path(output_folder) if output_folder else in_dir / "automation_output"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Locate the master template — try script directory, then input directory
