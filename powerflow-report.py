@@ -37,7 +37,7 @@ DECIMALS_POWER = 3      # kW / kVAR
 DECIMALS_VOLTAGE = 4    # Vpu boundaries
 DECIMALS_TAP = 6        # MPT Tap %
 DECIMALS_CURRENT = 1    # Amperes
-DECIMALS_PF = 6         # Power factor
+DECIMALS_PF = 2         # Power factor
 
 # Bus names used for per-scenario lookups
 POI_BUS = "POI"
@@ -270,12 +270,16 @@ def _populate_power(df_p, sc, poi_flow_kw, poi_flow_kvar, pv_row, bess_row):
         return
 
     # POI power from line flow (POI bus has no generation data)
+    # Sign convention: flip sign on POI and target reactive columns
     df_p.loc[mask, "Simulation results - Real power at POI (kW)"] = (
-        round(poi_flow_kw, DECIMALS_POWER)
+        round(-poi_flow_kw, DECIMALS_POWER)
     )
     df_p.loc[mask, "Simulation results - Reactive power at POI (kVAR)"] = (
-        round(poi_flow_kvar, DECIMALS_POWER)
+        round(-poi_flow_kvar, DECIMALS_POWER)
     )
+    target_reactive = df_p.loc[mask, "Target reactive power (kVAR)"].values[0]
+    if pd.notna(target_reactive) and target_reactive != 0:
+        df_p.loc[mask, "Target reactive power (kVAR)"] = -target_reactive
 
     # PV skid
     pv_kw = _safe_val(pv_row, "Generation kW", DECIMALS_POWER)
@@ -283,10 +287,9 @@ def _populate_power(df_p, sc, poi_flow_kw, poi_flow_kvar, pv_row, bess_row):
     df_p.loc[mask, "Gross Active Power Supplied Per PV Skid (kW)"] = pv_kw
     df_p.loc[mask, "Gross Reactive Power Supplied Per PV Skid (kVAR)"] = pv_kvar
 
-    # BESS skid — negate reactive power to match report sign convention
-    # INV_MB6 is one half of the BESS plant; multiply by 2 for total skid power
+    # BESS skid — INV_MB6 is one half of the BESS plant; multiply by 2 for total skid power
     bess_kw = _safe_val(bess_row, "Generation kW", DECIMALS_POWER) * 2
-    bess_kvar = -_safe_val(bess_row, "Generation kVAR", DECIMALS_POWER) * 2
+    bess_kvar = _safe_val(bess_row, "Generation kVAR", DECIMALS_POWER) * 2
     df_p.loc[mask, "Gross Active Power Supplied Per BESS Skid (kW)"] = bess_kw
     df_p.loc[mask, "Gross Reactive Power Supplied Per BESS Skid (kVAR)"] = bess_kvar
 
